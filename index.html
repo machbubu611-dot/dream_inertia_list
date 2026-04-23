@@ -5,27 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>夢想慣性清單</title>
     
-    <!-- Tailwind CSS (主要：動態編譯版) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Tailwind CSS (備用防護網：如果動態版被擋廣告軟體阻擋，2秒後自動切換靜態版) -->
-    <script>
-        setTimeout(function() {
-            if (!document.getElementById('tailwind-play') && !window.tailwind) {
-                var link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.href = 'https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css';
-                document.head.appendChild(link);
-                console.log("已啟用 Tailwind 靜態備用模式");
-            }
-        }, 1500);
-    </script>
+    <!-- 終極相容版：使用純靜態的預先編譯 Tailwind CSS，絕對不會被手機瀏覽器阻擋 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
 
-    <!-- Phosphor Icons (優化：改用純 CSS 載入，大幅降低被手機瀏覽器阻擋的機率) -->
+    <!-- Phosphor Icons (靜態 CSS 載入) -->
     <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/bold/style.min.css">
     <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.1/src/fill/style.min.css">
     
-    <!-- SortableJS (加入 defer 不阻塞畫面) -->
+    <!-- SortableJS -->
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <style>
@@ -47,7 +34,7 @@
         .sortable-ghost { opacity: 0.4; }
         .sortable-drag { cursor: grabbing !important; }
 
-        /* 原生 CSS 載入動畫 (不需要依賴外部庫即可顯示) */
+        /* 原生 CSS 載入動畫 */
         #startup-loader {
             position: fixed; inset: 0; background: #f8fafc; z-index: 99999;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -121,21 +108,14 @@
                         }
                     }, 300);
 
-                    // 智慧載入畫面消除邏輯：確保 Tailwind 編譯完成後才顯示畫面
-                    let twCheckCount = 0;
-                    const checkTw = setInterval(() => {
-                        const isTwReady = document.getElementById('tailwind-play') || document.querySelector('style[data-tw-compiled]');
-                        // 若 Tailwind 已就緒，或已等待超過 2.5 秒 (判定為被阻擋)，則強制顯示畫面
-                        if (isTwReady || twCheckCount > 25) {
-                            clearInterval(checkTw);
-                            const loader = document.getElementById('startup-loader');
-                            if(loader) {
-                                loader.style.opacity = '0';
-                                setTimeout(() => loader.style.display = 'none', 500);
-                            }
+                    // 簡化版的載入畫面消除邏輯
+                    setTimeout(() => {
+                        const loader = document.getElementById('startup-loader');
+                        if(loader) {
+                            loader.style.opacity = '0';
+                            setTimeout(() => loader.style.display = 'none', 500);
                         }
-                        twCheckCount++;
-                    }, 100);
+                    }, 500);
                 },
 
                 initSortable() {
@@ -148,13 +128,11 @@
                             onEnd: (evt) => {
                                 if (evt.oldIndex === evt.newIndex) return;
                                 
-                                // 為了不干擾 Alpine.js 的狀態追蹤，先將 Sortable 移動的 DOM 還原
                                 const item = evt.item;
                                 const parent = evt.to;
                                 const sibling = evt.oldIndex < evt.newIndex ? parent.children[evt.oldIndex] : parent.children[evt.oldIndex + 1];
                                 parent.insertBefore(item, sibling);
 
-                                // 修改陣列資料，讓 Alpine 自行完成正確的渲染
                                 const movedItem = this.habits.splice(evt.oldIndex, 1)[0];
                                 this.habits.splice(evt.newIndex, 0, movedItem);
                                 this.saveData();
@@ -198,7 +176,6 @@
                     this.saveData();
                 },
 
-                // 改期功能
                 openMoveTaskModal(dateStr, task) {
                     this.moveTaskData = { sourceDate: dateStr, task: task };
                     this.targetMoveDate = dateStr;
@@ -239,7 +216,6 @@
                     this.viewMonth = parseInt(m) - 1;
                 },
 
-                // 備註功能
                 openNoteModal(dateStr, task) {
                     this.noteTaskData = { date: dateStr, task: task };
                     this.currentNoteText = task.note || '';
@@ -255,12 +231,11 @@
                         targetTask.note = this.currentNoteText.trim();
                     }
                     
-                    this.trackerData = { ...this.trackerData }; // 觸發畫面更新
+                    this.trackerData = { ...this.trackerData }; 
                     this.saveData();
                     this.showNoteModal = false;
                 },
 
-                // 展開/更新月曆表邏輯
                 generateTracker() {
                     const validHabits = this.habits.filter(h => h.action.trim() !== '');
                     if (validHabits.length === 0) {
@@ -286,7 +261,6 @@
                         const dateStr = this.formatDateKey(dateObj);
                         const dayOfWeek = dateObj.getDay(); 
 
-                        // 中途更新時，今天以前保留不動
                         if (isCurrentRealMonth && day < realDay) {
                             if (existingData[dateStr]) {
                                 newMonthData[dateStr] = this.sortTasks([...existingData[dateStr]]);
@@ -354,7 +328,6 @@
                     }, 100);
                 },
 
-                // Calendar Navigation
                 prevMonth() {
                     if (this.viewMonth === 0) {
                         this.viewMonth = 11;
@@ -469,8 +442,8 @@
                 getFrequencyColor(freq) {
                     const colors = {
                         daily: 'bg-blue-100 text-blue-700 border-blue-200',
-                        weekly_custom: 'bg-green-100 text-green-700 border-green-200', /* 優化相容性：emerald -> green */
-                        monthly: 'bg-yellow-100 text-yellow-700 border-yellow-200' /* 優化相容性：amber -> yellow */
+                        weekly_custom: 'bg-green-100 text-green-700 border-green-200', 
+                        monthly: 'bg-yellow-100 text-yellow-700 border-yellow-200' 
                     };
                     return colors[freq] || 'bg-gray-100 text-gray-700';
                 },
@@ -521,13 +494,13 @@
 </head>
 <body class="bg-gray-100 text-gray-800 font-sans antialiased">
 
-    <!-- 系統啟動載入畫面 (防止樣式閃爍) -->
+    <!-- 系統啟動載入畫面 -->
     <div id="startup-loader">
         <div class="spinner"></div>
         <p class="font-bold text-gray-500">正在準備你的夢想清單...</p>
     </div>
 
-    <!-- 主程式容器 (加入 x-cloak，並替換所有自訂 Tailwind 為內聯 Style 確保相容) -->
+    <!-- 主程式容器 -->
     <div x-cloak x-data="dreamApp()" class="max-w-md mx-auto bg-white min-h-screen shadow-xl relative flex flex-col pb-24">
 
         <!-- Header -->
@@ -558,7 +531,9 @@
 
                 <div x-show="showEmojiPicker" style="display: none;">
                     <div @click="closeEmojiPicker" class="fixed inset-0 z-40"></div>
-                    <div x-transition.opacity.duration.200ms
+                    <div x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0"
+                         x-transition:enter-end="opacity-100"
                          class="absolute left-0 mt-2 z-50 w-full bg-white rounded-2xl shadow-2xl border border-gray-100 overflow-hidden">
                         <emoji-picker class="light"></emoji-picker>
                     </div>
@@ -603,7 +578,7 @@
                                 </button>
                             </div>
 
-                            <div x-show="habit.frequency === 'weekly_custom'" x-collapse class="mt-3 pt-3 border-t border-gray-100 ml-8">
+                            <div x-show="habit.frequency === 'weekly_custom'" class="mt-3 pt-3 border-t border-gray-100 ml-8" x-transition>
                                 <div class="text-xs text-gray-500 mb-2 font-medium">請選擇執行星期 (可複選)：</div>
                                 <div class="flex justify-between gap-1">
                                     <template x-for="dayIndex in [0,1,2,3,4,5,6]" :key="dayIndex">
@@ -616,7 +591,7 @@
                                 </div>
                             </div>
 
-                            <div x-show="habit.frequency === 'monthly'" x-collapse class="mt-3 pt-3 border-t border-gray-100 ml-8">
+                            <div x-show="habit.frequency === 'monthly'" class="mt-3 pt-3 border-t border-gray-100 ml-8" x-transition>
                                 <div class="flex items-center gap-2">
                                     <span class="text-xs text-gray-500 font-medium">請選擇驗收日：每月</span>
                                     <input type="number" min="1" max="31" x-model.number="habit.monthlyDay" @input="saveData" class="w-16 p-1 text-center border border-gray-200 rounded-md focus:ring-2 focus:ring-indigo-400 outline-none text-sm font-bold text-indigo-700">
@@ -700,7 +675,7 @@
 
                                     <span x-text="cDay.day" class="leading-none mt-1"></span>
                                     
-                                    <div x-show="cDay.day && hasTasks(cDay.dateStr)" class="flex justify-center items-center w-full px-1 mt-1 gap-0.5" style="height: 6px;">
+                                    <div x-show="cDay.day && hasTasks(cDay.dateStr)" class="flex justify-center items-center w-full px-1 mt-1" style="height: 6px; gap: 2px;">
                                         <template x-for="(task, idx) in (trackerData[cDay.dateStr] || [])" :key="task.id">
                                             <div x-show="idx < 3" 
                                                  class="w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors"
@@ -730,9 +705,11 @@
                         <template x-for="task in (trackerData[selectedDate] || [])" :key="task.id">
                             <div class="flex items-start p-4 hover:bg-gray-50 transition group">
                                 <label class="relative flex items-center cursor-pointer mr-3 mt-1">
-                                    <input type="checkbox" x-model="task.completed" @change="saveData" class="peer sr-only">
-                                    <div class="w-6 h-6 border-2 border-gray-300 rounded-full peer-checked:bg-green-500 peer-checked:border-green-500 flex items-center justify-center transition-all duration-200 shadow-sm group-hover:border-indigo-300">
-                                        <i class="ph-bold ph-check text-white opacity-0 peer-checked:opacity-100 text-sm transform scale-50 peer-checked:scale-100 transition-transform duration-200"></i>
+                                    <input type="checkbox" x-model="task.completed" @change="saveData" class="sr-only">
+                                    <div class="w-6 h-6 border-2 rounded-full flex items-center justify-center transition-all duration-200 shadow-sm"
+                                         :class="task.completed ? 'bg-green-500 border-green-500' : 'border-gray-300 group-hover:border-indigo-300'">
+                                        <i class="ph-bold ph-check text-white text-sm transform transition-transform duration-200"
+                                           :class="task.completed ? 'opacity-100 scale-100' : 'opacity-0 scale-50'"></i>
                                     </div>
                                 </label>
                                 
@@ -839,7 +816,7 @@
             </div>
         </div>
 
-    </div> <!-- /End of main x-data container -->
+    </div>
 
 </body>
 </html>
