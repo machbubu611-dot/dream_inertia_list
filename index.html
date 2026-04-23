@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>夢想慣性清單</title>
     
-    <!-- 終極相容版：使用純靜態的預先編譯 Tailwind CSS，絕對不會被手機瀏覽器阻擋 -->
+    <!-- Tailwind CSS (靜態防護版) -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css">
 
     <!-- Phosphor Icons (靜態 CSS 載入) -->
@@ -16,25 +16,14 @@
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <style>
-        /* 防止樣式載入前的陽春畫面閃爍 */
         [x-cloak] { display: none !important; }
-        
         * { -webkit-tap-highlight-color: transparent; }
-        
         emoji-picker {
-            width: 100%;
-            height: 350px;
-            --background: #ffffff;
-            --border-color: #e2e8f0;
-            --indicator-color: #6366f1;
-            --input-border-color: #e2e8f0;
-            --outline-color: #6366f1;
+            width: 100%; height: 350px; --background: #ffffff; --border-color: #e2e8f0;
+            --indicator-color: #6366f1; --input-border-color: #e2e8f0; --outline-color: #6366f1;
         }
-
         .sortable-ghost { opacity: 0.4; }
         .sortable-drag { cursor: grabbing !important; }
-
-        /* 原生 CSS 載入動畫 */
         #startup-loader {
             position: fixed; inset: 0; background: #f8fafc; z-index: 99999;
             display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -47,447 +36,435 @@
         @keyframes spin { 100% { transform: rotate(360deg); } }
     </style>
 
-    <script>
-        document.addEventListener('alpine:init', () => {
-            Alpine.data('dreamApp', () => ({
-                // 狀態資料
-                dreamText: '',
-                dreamEmoji: '🚀',
-                habits: [
-                    { id: 'h1', frequency: 'daily', action: '', selectedDays: [], monthlyDay: 1 },
-                    { id: 'h2', frequency: 'weekly_custom', action: '', selectedDays: [1, 4], monthlyDay: 1 },
-                    { id: 'h3', frequency: 'monthly', action: '', selectedDays: [], monthlyDay: 15 },
-                ],
-                trackerData: {}, 
-                todayDateStr: '',
-                selectedDate: '', 
-                viewYear: new Date().getFullYear(),
-                viewMonth: new Date().getMonth(),
-                showEmojiPicker: false,
+    <!-- 核心邏輯與 Firebase 雲端同步整合 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        // 將 Alpine.js 改用 ES Module 載入，確保執行順序正確
+        import Alpine from "https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/module.esm.js";
+
+        // 初始化 Firebase 變數
+        let db, auth, appId;
+        let isFirebaseAvailable = false;
+
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+                appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+                isFirebaseAvailable = true;
+            }
+        } catch (e) {
+            console.error('Firebase 初始化失敗', e);
+        }
+
+        Alpine.data('dreamApp', () => ({
+            // 狀態資料
+            dreamText: '',
+            dreamEmoji: '🚀',
+            habits: [
+                { id: 'h1', frequency: 'daily', action: '', selectedDays: [], monthlyDay: 1 },
+                { id: 'h2', frequency: 'weekly_custom', action: '', selectedDays: [1, 4], monthlyDay: 1 },
+                { id: 'h3', frequency: 'monthly', action: '', selectedDays: [], monthlyDay: 15 },
+            ],
+            trackerData: {}, 
+            todayDateStr: '',
+            selectedDate: '', 
+            viewYear: new Date().getFullYear(),
+            viewMonth: new Date().getMonth(),
+            showEmojiPicker: false,
+            
+            // 改期與備註狀態
+            showMoveModal: false, moveTaskData: null, targetMoveDate: '',
+            showNoteModal: false, noteTaskData: null, currentNoteText: '',
+
+            dayNames: ['日', '一', '二', '三', '四', '五', '六'],
+
+            // 雲端同步專用狀態
+            isOnline: isFirebaseAvailable,
+            isSyncing: false,
+            _syncTimer: null,
+
+            sortTasks(tasks) {
+                const order = { 'monthly': 1, 'weekly_custom': 2, 'daily': 3 };
+                return tasks.sort((a, b) => order[a.frequency] - order[b.frequency]);
+            },
+
+            init() {
+                const today = new Date();
+                this.todayDateStr = this.formatDateKey(today);
+                this.viewYear = today.getFullYear();
+                this.viewMonth = today.getMonth();
+                this.selectedDate = this.todayDateStr;
                 
-                // 改期 Modal 狀態
-                showMoveModal: false,
-                moveTaskData: null,
-                targetMoveDate: '',
-
-                // 備註 Modal 狀態
-                showNoteModal: false,
-                noteTaskData: null,
-                currentNoteText: '',
-
-                dayNames: ['日', '一', '二', '三', '四', '五', '六'],
-
-                // 任務排序：指定驗收日 > 每週特定天 > 每日
-                sortTasks(tasks) {
-                    const order = { 'monthly': 1, 'weekly_custom': 2, 'daily': 3 };
-                    return tasks.sort((a, b) => order[a.frequency] - order[b.frequency]);
-                },
-
-                init() {
-                    const today = new Date();
-                    this.todayDateStr = this.formatDateKey(today);
-                    this.viewYear = today.getFullYear();
-                    this.viewMonth = today.getMonth();
-                    this.selectedDate = this.todayDateStr;
-                    
-                    this.loadData();
-                    this.$nextTick(() => {
-                        if (this.$refs.dreamInput) this.resizeTextarea(this.$refs.dreamInput);
-                        this.initSortable();
-                    });
-                    
-                    // 確保 Emoji Picker 載入
-                    setTimeout(() => {
-                        const picker = document.querySelector('emoji-picker');
-                        if(picker) {
-                            picker.addEventListener('emoji-click', event => {
-                                this.dreamEmoji = event.detail.unicode;
-                                this.showEmojiPicker = false;
-                                this.saveData();
-                            });
-                        }
-                    }, 300);
-
-                    // 簡化版的載入畫面消除邏輯
-                    setTimeout(() => {
-                        const loader = document.getElementById('startup-loader');
-                        if(loader) {
-                            loader.style.opacity = '0';
-                            setTimeout(() => loader.style.display = 'none', 500);
-                        }
-                    }, 500);
-                },
-
-                initSortable() {
-                    if (this.$refs.habitList) {
-                        new Sortable(this.$refs.habitList, {
-                            handle: '.drag-handle',
-                            animation: 150,
-                            ghostClass: 'sortable-ghost',
-                            dragClass: 'sortable-drag',
-                            onEnd: (evt) => {
-                                if (evt.oldIndex === evt.newIndex) return;
-                                
-                                const item = evt.item;
-                                const parent = evt.to;
-                                const sibling = evt.oldIndex < evt.newIndex ? parent.children[evt.oldIndex] : parent.children[evt.oldIndex + 1];
-                                parent.insertBefore(item, sibling);
-
-                                const movedItem = this.habits.splice(evt.oldIndex, 1)[0];
-                                this.habits.splice(evt.newIndex, 0, movedItem);
-                                this.saveData();
-                            }
+                this.$nextTick(() => {
+                    if (this.$refs.dreamInput) this.resizeTextarea(this.$refs.dreamInput);
+                    this.initSortable();
+                });
+                
+                setTimeout(() => {
+                    const picker = document.querySelector('emoji-picker');
+                    if(picker) {
+                        picker.addEventListener('emoji-click', event => {
+                            this.dreamEmoji = event.detail.unicode;
+                            this.showEmojiPicker = false;
+                            this.saveData();
                         });
                     }
-                },
+                }, 300);
 
-                resizeTextarea(el) {
-                    el.style.height = 'auto';
-                    el.style.height = el.scrollHeight + 'px';
-                },
+                // 啟動資料庫整合
+                this.initDatabase();
+            },
 
-                toggleEmojiPicker() { this.showEmojiPicker = true; },
-                closeEmojiPicker() { this.showEmojiPicker = false; },
+            initDatabase() {
+                // 若無雲端環境，單純載入本機端資料
+                if (!this.isOnline) {
+                    this.loadLocalData();
+                    this.hideLoader();
+                    return;
+                }
 
-                addHabit() {
-                    this.habits.push({
-                        id: 'h_' + Date.now(),
-                        frequency: 'daily',
-                        action: '',
-                        selectedDays: [],
-                        monthlyDay: 1
+                // 雲端 Auth 授權登入
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (err) {
+                        console.error('登入驗證失敗', err);
+                        this.loadLocalData();
+                        this.hideLoader();
+                    }
+                };
+
+                initAuth();
+
+                // 登入狀態監聽與即時同步
+                onAuthStateChanged(auth, (user) => {
+                    if (!user) return;
+                    
+                    const docRef = doc(db, 'artifacts', appId, 'users', user.uid, 'dreamApp', 'mainData');
+                    
+                    onSnapshot(docRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            // 判斷如果是因為自己發起的寫入而觸發的同步，就跳過，避免打字時畫面閃爍
+                            if (docSnap.metadata.hasPendingWrites) return;
+                            this.applyData(docSnap.data());
+                        } else {
+                            // 第一次使用雲端，將本地資料上傳
+                            this.loadLocalData();
+                            this.saveDataToCloud();
+                        }
+                        this.hideLoader();
+                    }, (error) => {
+                        console.error('Firestore 錯誤:', error);
+                        this.loadLocalData();
+                        this.hideLoader();
                     });
-                    this.saveData();
-                },
+                });
+            },
 
-                removeHabit(id) {
-                    this.habits = this.habits.filter(h => h.id !== id);
-                    this.saveData();
-                },
+            hideLoader() {
+                const loader = document.getElementById('startup-loader');
+                if(loader) {
+                    loader.style.opacity = '0';
+                    setTimeout(() => loader.style.display = 'none', 500);
+                }
+            },
 
-                toggleHabitDay(habit, dayIndex) {
-                    const idx = habit.selectedDays.indexOf(dayIndex);
-                    if (idx > -1) {
-                        habit.selectedDays.splice(idx, 1);
-                    } else {
-                        habit.selectedDays.push(dayIndex);
-                        habit.selectedDays.sort();
+            initSortable() {
+                if (this.$refs.habitList) {
+                    new Sortable(this.$refs.habitList, {
+                        handle: '.drag-handle', animation: 150,
+                        ghostClass: 'sortable-ghost', dragClass: 'sortable-drag',
+                        onEnd: (evt) => {
+                            if (evt.oldIndex === evt.newIndex) return;
+                            const item = evt.item;
+                            const parent = evt.to;
+                            const sibling = evt.oldIndex < evt.newIndex ? parent.children[evt.oldIndex] : parent.children[evt.oldIndex + 1];
+                            parent.insertBefore(item, sibling);
+
+                            const movedItem = this.habits.splice(evt.oldIndex, 1)[0];
+                            this.habits.splice(evt.newIndex, 0, movedItem);
+                            this.saveData();
+                        }
+                    });
+                }
+            },
+
+            resizeTextarea(el) {
+                el.style.height = 'auto';
+                el.style.height = el.scrollHeight + 'px';
+            },
+
+            toggleEmojiPicker() { this.showEmojiPicker = true; },
+            closeEmojiPicker() { this.showEmojiPicker = false; },
+
+            addHabit() {
+                this.habits.push({ id: 'h_' + Date.now(), frequency: 'daily', action: '', selectedDays: [], monthlyDay: 1 });
+                this.saveData();
+            },
+
+            removeHabit(id) {
+                this.habits = this.habits.filter(h => h.id !== id);
+                this.saveData();
+            },
+
+            toggleHabitDay(habit, dayIndex) {
+                const idx = habit.selectedDays.indexOf(dayIndex);
+                if (idx > -1) { habit.selectedDays.splice(idx, 1); } 
+                else { habit.selectedDays.push(dayIndex); habit.selectedDays.sort(); }
+                this.saveData();
+            },
+
+            openMoveTaskModal(dateStr, task) {
+                this.moveTaskData = { sourceDate: dateStr, task: task };
+                this.targetMoveDate = dateStr;
+                this.showMoveModal = true;
+            },
+
+            confirmMoveTask() {
+                if (!this.targetMoveDate || !this.moveTaskData) return;
+                const srcDate = this.moveTaskData.sourceDate, tgtDate = this.targetMoveDate, task = this.moveTaskData.task;
+                if (srcDate === tgtDate) { this.showMoveModal = false; return; }
+
+                this.trackerData[srcDate] = this.trackerData[srcDate].filter(t => t.id !== task.id);
+                if (!this.trackerData[tgtDate]) this.trackerData[tgtDate] = [];
+                
+                const movedTask = { ...task, id: 't_' + tgtDate + '_' + task.habitId + '_' + Date.now() };
+                this.trackerData[tgtDate].push(movedTask);
+                this.trackerData[tgtDate] = this.sortTasks(this.trackerData[tgtDate]);
+                this.trackerData = { ...this.trackerData };
+                
+                this.saveData();
+                this.showMoveModal = false;
+                this.selectDate(tgtDate);
+                
+                const [y, m, d] = tgtDate.split('-');
+                this.viewYear = parseInt(y); this.viewMonth = parseInt(m) - 1;
+            },
+
+            openNoteModal(dateStr, task) {
+                this.noteTaskData = { date: dateStr, task: task };
+                this.currentNoteText = task.note || '';
+                this.showNoteModal = true;
+            },
+
+            confirmNote() {
+                if (!this.noteTaskData) return;
+                const { date, task } = this.noteTaskData;
+                const targetTask = this.trackerData[date].find(t => t.id === task.id);
+                if (targetTask) targetTask.note = this.currentNoteText.trim();
+                this.trackerData = { ...this.trackerData }; 
+                this.saveData();
+                this.showNoteModal = false;
+            },
+
+            generateTracker() {
+                const validHabits = this.habits.filter(h => h.action.trim() !== '');
+                if (validHabits.length === 0) {
+                    alert('請在建立慣性動作區塊，至少輸入一個具體動作！'); return;
+                }
+
+                const year = this.viewYear, month = this.viewMonth;
+                const now = new Date(), realYear = now.getFullYear(), realMonth = now.getMonth(), realDay = now.getDate();
+                const isCurrentRealMonth = (year === realYear && month === realMonth);
+                const daysInMonth = new Date(year, month + 1, 0).getDate();
+                
+                const existingData = this.trackerData, newMonthData = {};
+
+                for (let day = 1; day <= daysInMonth; day++) {
+                    const dateObj = new Date(year, month, day);
+                    const dateStr = this.formatDateKey(dateObj), dayOfWeek = dateObj.getDay(); 
+
+                    if (isCurrentRealMonth && day < realDay) {
+                        if (existingData[dateStr]) newMonthData[dateStr] = this.sortTasks([...existingData[dateStr]]);
+                        else newMonthData[dateStr] = [];
+                        continue;
                     }
-                    this.saveData();
-                },
-
-                openMoveTaskModal(dateStr, task) {
-                    this.moveTaskData = { sourceDate: dateStr, task: task };
-                    this.targetMoveDate = dateStr;
-                    this.showMoveModal = true;
-                },
-
-                confirmMoveTask() {
-                    if (!this.targetMoveDate || !this.moveTaskData) return;
                     
-                    const srcDate = this.moveTaskData.sourceDate;
-                    const tgtDate = this.targetMoveDate;
-                    const task = this.moveTaskData.task;
+                    const tasksForDay = [];
+                    validHabits.forEach(habit => {
+                        let shouldAdd = false;
+                        if (habit.frequency === 'daily') shouldAdd = true;
+                        else if (habit.frequency === 'weekly_custom') { if (habit.selectedDays.includes(dayOfWeek)) shouldAdd = true; } 
+                        else if (habit.frequency === 'monthly') {
+                            let targetDay = habit.monthlyDay || daysInMonth;
+                            if (targetDay > daysInMonth) targetDay = daysInMonth; 
+                            if (day === targetDay) shouldAdd = true;
+                        }
 
-                    if (srcDate === tgtDate) {
-                        this.showMoveModal = false;
-                        return;
-                    }
-
-                    this.trackerData[srcDate] = this.trackerData[srcDate].filter(t => t.id !== task.id);
-
-                    if (!this.trackerData[tgtDate]) {
-                        this.trackerData[tgtDate] = [];
-                    }
-                    
-                    const movedTask = { ...task, id: 't_' + tgtDate + '_' + task.habitId + '_' + Date.now() };
-                    this.trackerData[tgtDate].push(movedTask);
-                    
-                    this.trackerData[tgtDate] = this.sortTasks(this.trackerData[tgtDate]);
-                    this.trackerData = { ...this.trackerData };
-                    
-                    this.saveData();
-                    this.showMoveModal = false;
-
-                    this.selectDate(tgtDate);
-                    
-                    const [y, m, d] = tgtDate.split('-');
-                    this.viewYear = parseInt(y);
-                    this.viewMonth = parseInt(m) - 1;
-                },
-
-                openNoteModal(dateStr, task) {
-                    this.noteTaskData = { date: dateStr, task: task };
-                    this.currentNoteText = task.note || '';
-                    this.showNoteModal = true;
-                },
-
-                confirmNote() {
-                    if (!this.noteTaskData) return;
-                    const { date, task } = this.noteTaskData;
-                    
-                    const targetTask = this.trackerData[date].find(t => t.id === task.id);
-                    if (targetTask) {
-                        targetTask.note = this.currentNoteText.trim();
-                    }
-                    
-                    this.trackerData = { ...this.trackerData }; 
-                    this.saveData();
-                    this.showNoteModal = false;
-                },
-
-                generateTracker() {
-                    const validHabits = this.habits.filter(h => h.action.trim() !== '');
-                    if (validHabits.length === 0) {
-                        alert('請在建立慣性動作區塊，至少輸入一個具體動作！');
-                        return;
-                    }
-
-                    const year = this.viewYear;
-                    const month = this.viewMonth;
-                    const now = new Date();
-                    const realYear = now.getFullYear();
-                    const realMonth = now.getMonth();
-                    const realDay = now.getDate();
-
-                    const isCurrentRealMonth = (year === realYear && month === realMonth);
-                    const daysInMonth = new Date(year, month + 1, 0).getDate();
-                    
-                    const existingData = this.trackerData;
-                    const newMonthData = {};
-
-                    for (let day = 1; day <= daysInMonth; day++) {
-                        const dateObj = new Date(year, month, day);
-                        const dateStr = this.formatDateKey(dateObj);
-                        const dayOfWeek = dateObj.getDay(); 
-
-                        if (isCurrentRealMonth && day < realDay) {
+                        if (shouldAdd) {
+                            let isCompleted = false, existingNote = '';
                             if (existingData[dateStr]) {
-                                newMonthData[dateStr] = this.sortTasks([...existingData[dateStr]]);
-                            } else {
-                                newMonthData[dateStr] = [];
+                                const existingTask = existingData[dateStr].find(t => t.habitId === habit.id);
+                                if (existingTask) { isCompleted = existingTask.completed; existingNote = existingTask.note || ''; }
                             }
-                            continue;
+                            tasksForDay.push({ id: 't_' + dateStr + '_' + habit.id, habitId: habit.id, action: habit.action, frequency: habit.frequency, completed: isCompleted, note: existingNote });
                         }
-                        
-                        const tasksForDay = [];
+                    });
+                    newMonthData[dateStr] = this.sortTasks(tasksForDay);
+                }
 
-                        validHabits.forEach(habit => {
-                            let shouldAdd = false;
+                for (let dateStr in newMonthData) this.trackerData[dateStr] = newMonthData[dateStr];
+                this.saveData();
 
-                            if (habit.frequency === 'daily') {
-                                shouldAdd = true;
-                            } else if (habit.frequency === 'weekly_custom') {
-                                if (habit.selectedDays.includes(dayOfWeek)) shouldAdd = true;
-                            } else if (habit.frequency === 'monthly') {
-                                let targetDay = habit.monthlyDay || daysInMonth;
-                                if (targetDay > daysInMonth) targetDay = daysInMonth; 
-                                if (day === targetDay) shouldAdd = true;
-                            }
+                if (isCurrentRealMonth) this.selectedDate = this.todayDateStr;
+                else this.selectedDate = this.formatDateKey(new Date(year, month, 1));
 
-                            if (shouldAdd) {
-                                let isCompleted = false;
-                                let existingNote = '';
-                                if (existingData[dateStr]) {
-                                    const existingTask = existingData[dateStr].find(t => t.habitId === habit.id);
-                                    if (existingTask) {
-                                        isCompleted = existingTask.completed;
-                                        existingNote = existingTask.note || '';
-                                    }
-                                }
+                setTimeout(() => {
+                    const trackerSection = document.getElementById('tracker-section');
+                    if (trackerSection) trackerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, 100);
+            },
 
-                                tasksForDay.push({
-                                    id: 't_' + dateStr + '_' + habit.id,
-                                    habitId: habit.id,
-                                    action: habit.action,
-                                    frequency: habit.frequency,
-                                    completed: isCompleted,
-                                    note: existingNote
-                                });
-                            }
-                        });
+            prevMonth() {
+                if (this.viewMonth === 0) { this.viewMonth = 11; this.viewYear--; } 
+                else { this.viewMonth--; }
+                this.autoSelectDateAfterNav();
+            },
+            nextMonth() {
+                if (this.viewMonth === 11) { this.viewMonth = 0; this.viewYear++; } 
+                else { this.viewMonth++; }
+                this.autoSelectDateAfterNav();
+            },
+            autoSelectDateAfterNav() {
+                const now = new Date();
+                if (this.viewYear === now.getFullYear() && this.viewMonth === now.getMonth()) this.selectedDate = this.todayDateStr;
+                else this.selectedDate = this.formatDateKey(new Date(this.viewYear, this.viewMonth, 1));
+            },
+            selectDate(date) { this.selectedDate = date; },
+            hasTasks(dateStr) { return this.trackerData[dateStr] && this.trackerData[dateStr].length > 0; },
+            isAllTasksCompleted(dateStr) {
+                const tasks = this.trackerData[dateStr];
+                if (!tasks || tasks.length === 0) return false;
+                return tasks.every(task => task.completed);
+            },
 
-                        newMonthData[dateStr] = this.sortTasks(tasksForDay);
-                    }
+            get calendarDays() {
+                const year = this.viewYear, month = this.viewMonth;
+                const firstDay = new Date(year, month, 1).getDay(), daysInMonth = new Date(year, month + 1, 0).getDate();
+                const days = [];
+                for(let i=0; i<firstDay; i++) days.push({ id: `empty-${i}`, dateStr: '', day: '' });
+                for(let i=1; i<=daysInMonth; i++) {
+                    const d = new Date(year, month, i);
+                    days.push({ id: `day-${i}`, dateStr: this.formatDateKey(d), day: i });
+                }
+                return days;
+            },
+            get viewMonthName() { return new Date(this.viewYear, this.viewMonth).toLocaleString('zh-TW', { month: 'long' }); },
+            get monthlyTasks() {
+                const prefix = `${this.viewYear}-${String(this.viewMonth + 1).padStart(2, '0')}`;
+                let allTasks = [];
+                for (const date in this.trackerData) {
+                    if (date.startsWith(prefix)) allTasks = allTasks.concat(this.trackerData[date]);
+                }
+                return allTasks;
+            },
+            get totalTasksCount() { return this.monthlyTasks.length; },
+            get completedTasksCount() { return this.monthlyTasks.filter(t => t.completed).length; },
+            get progressPercentage() {
+                if (this.totalTasksCount === 0) return 0;
+                return Math.round((this.completedTasksCount / this.totalTasksCount) * 100);
+            },
+            get isTrackerActive() { return Object.keys(this.trackerData).length > 0; },
+            formatDateKey(date) {
+                const y = date.getFullYear(), m = String(date.getMonth() + 1).padStart(2, '0'), d = String(date.getDate()).padStart(2, '0');
+                return `${y}-${m}-${d}`;
+            },
+            formatDateStr(dateStr) {
+                if (!dateStr) return '';
+                const [y, m, d] = dateStr.split('-'); return `${parseInt(m)}月${parseInt(d)}日`;
+            },
+            getShortDay(dateStr) {
+                if (!dateStr) return ''; return this.dayNames[new Date(dateStr).getDay()];
+            },
+            getFrequencyLabel(freq) {
+                const labels = { daily: '每日', weekly_custom: '每週', monthly: '每月' }; return labels[freq] || freq;
+            },
+            getFrequencyColor(freq) {
+                const colors = {
+                    daily: 'bg-blue-100 text-blue-700 border-blue-200',
+                    weekly_custom: 'bg-green-100 text-green-700 border-green-200', 
+                    monthly: 'bg-yellow-100 text-yellow-700 border-yellow-200' 
+                };
+                return colors[freq] || 'bg-gray-100 text-gray-700';
+            },
 
-                    for (let dateStr in newMonthData) {
-                        this.trackerData[dateStr] = newMonthData[dateStr];
-                    }
+            // 資料儲存機制 (包含本機與雲端)
+            saveData() {
+                this.saveLocalData();
+                this.saveDataCloudDebounced(); // 使用防抖函數防止頻繁上傳
+            },
 
-                    this.saveData();
+            saveDataCloudDebounced() {
+                if (!this.isOnline) return;
+                clearTimeout(this._syncTimer);
+                this._syncTimer = setTimeout(() => {
+                    this.saveDataToCloud();
+                }, 1000);
+            },
 
-                    if (isCurrentRealMonth) {
-                        this.selectedDate = this.todayDateStr;
-                    } else {
-                        this.selectedDate = this.formatDateKey(new Date(year, month, 1));
-                    }
-
-                    setTimeout(() => {
-                        const trackerSection = document.getElementById('tracker-section');
-                        if (trackerSection) trackerSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                    }, 100);
-                },
-
-                prevMonth() {
-                    if (this.viewMonth === 0) {
-                        this.viewMonth = 11;
-                        this.viewYear--;
-                    } else {
-                        this.viewMonth--;
-                    }
-                    this.autoSelectDateAfterNav();
-                },
-                nextMonth() {
-                    if (this.viewMonth === 11) {
-                        this.viewMonth = 0;
-                        this.viewYear++;
-                    } else {
-                        this.viewMonth++;
-                    }
-                    this.autoSelectDateAfterNav();
-                },
-                autoSelectDateAfterNav() {
-                    const now = new Date();
-                    if (this.viewYear === now.getFullYear() && this.viewMonth === now.getMonth()) {
-                        this.selectedDate = this.todayDateStr;
-                    } else {
-                        this.selectedDate = this.formatDateKey(new Date(this.viewYear, this.viewMonth, 1));
-                    }
-                },
-
-                selectDate(date) {
-                    this.selectedDate = date;
-                },
-
-                hasTasks(dateStr) {
-                    return this.trackerData[dateStr] && this.trackerData[dateStr].length > 0;
-                },
-
-                isAllTasksCompleted(dateStr) {
-                    const tasks = this.trackerData[dateStr];
-                    if (!tasks || tasks.length === 0) return false;
-                    return tasks.every(task => task.completed);
-                },
-
-                get calendarDays() {
-                    const year = this.viewYear;
-                    const month = this.viewMonth;
-                    const firstDay = new Date(year, month, 1).getDay();
-                    const daysInMonth = new Date(year, month + 1, 0).getDate();
-                    const days = [];
-                    
-                    for(let i=0; i<firstDay; i++) {
-                        days.push({ id: `empty-${i}`, dateStr: '', day: '' });
-                    }
-                    for(let i=1; i<=daysInMonth; i++) {
-                        const d = new Date(year, month, i);
-                        days.push({
-                            id: `day-${i}`,
-                            dateStr: this.formatDateKey(d),
-                            day: i
-                        });
-                    }
-                    return days;
-                },
-
-                get viewMonthName() {
-                    return new Date(this.viewYear, this.viewMonth).toLocaleString('zh-TW', { month: 'long' });
-                },
-
-                get monthlyTasks() {
-                    const prefix = `${this.viewYear}-${String(this.viewMonth + 1).padStart(2, '0')}`;
-                    let allTasks = [];
-                    for (const date in this.trackerData) {
-                        if (date.startsWith(prefix)) {
-                            allTasks = allTasks.concat(this.trackerData[date]);
-                        }
-                    }
-                    return allTasks;
-                },
-
-                get totalTasksCount() { return this.monthlyTasks.length; },
-                get completedTasksCount() { return this.monthlyTasks.filter(t => t.completed).length; },
-                get progressPercentage() {
-                    if (this.totalTasksCount === 0) return 0;
-                    return Math.round((this.completedTasksCount / this.totalTasksCount) * 100);
-                },
-
-                get isTrackerActive() {
-                    return Object.keys(this.trackerData).length > 0;
-                },
-
-                formatDateKey(date) {
-                    const y = date.getFullYear();
-                    const m = String(date.getMonth() + 1).padStart(2, '0');
-                    const d = String(date.getDate()).padStart(2, '0');
-                    return `${y}-${m}-${d}`;
-                },
-
-                formatDateStr(dateStr) {
-                    if (!dateStr) return '';
-                    const [y, m, d] = dateStr.split('-');
-                    return `${parseInt(m)}月${parseInt(d)}日`;
-                },
-
-                getShortDay(dateStr) {
-                    if (!dateStr) return '';
-                    return this.dayNames[new Date(dateStr).getDay()];
-                },
-
-                getFrequencyLabel(freq) {
-                    const labels = { daily: '每日', weekly_custom: '每週', monthly: '每月' };
-                    return labels[freq] || freq;
-                },
-
-                getFrequencyColor(freq) {
-                    const colors = {
-                        daily: 'bg-blue-100 text-blue-700 border-blue-200',
-                        weekly_custom: 'bg-green-100 text-green-700 border-green-200', 
-                        monthly: 'bg-yellow-100 text-yellow-700 border-yellow-200' 
-                    };
-                    return colors[freq] || 'bg-gray-100 text-gray-700';
-                },
-
-                saveData() {
+            async saveDataToCloud() {
+                if (!this.isOnline || !auth || !auth.currentUser) return;
+                this.isSyncing = true;
+                try {
                     const data = {
-                        dreamText: this.dreamText,
-                        dreamEmoji: this.dreamEmoji,
-                        habits: this.habits,
-                        trackerData: this.trackerData
+                        dreamText: this.dreamText, dreamEmoji: this.dreamEmoji,
+                        habits: this.habits, trackerData: this.trackerData
                     };
-                    localStorage.setItem('dreamInertiaData', JSON.stringify(data));
-                },
+                    const docRef = doc(db, 'artifacts', appId, 'users', auth.currentUser.uid, 'dreamApp', 'mainData');
+                    await setDoc(docRef, data);
+                } catch (e) {
+                    console.error('雲端儲存失敗', e);
+                } finally {
+                    this.isSyncing = false;
+                }
+            },
 
-                loadData() {
-                    const saved = localStorage.getItem('dreamInertiaData');
-                    if (saved) {
-                        try {
-                            const data = JSON.parse(saved);
-                            this.dreamText = data.dreamText || '';
-                            this.dreamEmoji = data.dreamEmoji || '🚀';
-                            
-                            if (data.habits) {
-                                this.habits = data.habits.map(h => ({
-                                    ...h,
-                                    monthlyDay: h.monthlyDay || 1
-                                }));
-                            }
-                            this.trackerData = data.trackerData || {};
-                            
-                            for (let date in this.trackerData) {
-                                this.trackerData[date] = this.sortTasks(this.trackerData[date]);
-                            }
-                        } catch(e) {
-                            console.error('資料載入失敗', e);
-                        }
+            saveLocalData() {
+                const data = {
+                    dreamText: this.dreamText, dreamEmoji: this.dreamEmoji,
+                    habits: this.habits, trackerData: this.trackerData
+                };
+                localStorage.setItem('dreamInertiaData', JSON.stringify(data));
+            },
+
+            applyData(data) {
+                this.dreamText = data.dreamText || '';
+                this.dreamEmoji = data.dreamEmoji || '🚀';
+                if (data.habits) {
+                    this.habits = data.habits.map(h => ({ ...h, monthlyDay: h.monthlyDay || 1 }));
+                }
+                this.trackerData = data.trackerData || {};
+                for (let date in this.trackerData) {
+                    this.trackerData[date] = this.sortTasks(this.trackerData[date]);
+                }
+            },
+
+            loadLocalData() {
+                const saved = localStorage.getItem('dreamInertiaData');
+                if (saved) {
+                    try {
+                        const data = JSON.parse(saved);
+                        this.applyData(data);
+                    } catch(e) {
+                        console.error('本機資料載入失敗', e);
                     }
                 }
-            }));
-        });
+            }
+        }));
+
+        // 啟動 Alpine
+        Alpine.start();
     </script>
 
-    <!-- Alpine.js 核心 -->
-    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <!-- Emoji Picker 核心 -->
     <script type="module" src="https://cdn.jsdelivr.net/npm/emoji-picker-element@1.22.8/index.js"></script>
 
@@ -497,15 +474,23 @@
     <!-- 系統啟動載入畫面 -->
     <div id="startup-loader">
         <div class="spinner"></div>
-        <p class="font-bold text-gray-500">正在準備你的夢想清單...</p>
+        <p class="font-bold text-gray-500">正在連接夢想資料庫...</p>
     </div>
 
     <!-- 主程式容器 -->
-    <div x-cloak x-data="dreamApp()" class="max-w-md mx-auto bg-white min-h-screen shadow-xl relative flex flex-col pb-24">
+    <div x-cloak x-data="dreamApp" class="max-w-md mx-auto bg-white min-h-screen shadow-xl relative flex flex-col pb-24">
 
         <!-- Header -->
         <header class="bg-gradient-to-r from-indigo-500 to-purple-500 text-white p-5 shadow-md z-10 relative rounded-b-3xl" style="border-bottom-left-radius: 2rem; border-bottom-right-radius: 2rem;">
-            <h1 class="text-2xl font-bold flex items-center justify-center gap-2 tracking-wide">
+            
+            <!-- 同步狀態列 -->
+            <div class="absolute top-4 right-5 flex items-center text-white/80 text-xs font-medium">
+                <span x-show="isSyncing" class="flex items-center gap-1" x-cloak><i class="ph-bold ph-arrows-clockwise animate-spin text-sm"></i> 同步中</span>
+                <span x-show="!isSyncing && isOnline" class="flex items-center gap-1" x-cloak title="跨裝置雲端同步已開啟"><i class="ph-bold ph-cloud-check text-sm text-green-300"></i> 已同步</span>
+                <span x-show="!isOnline" class="flex items-center gap-1" x-cloak title="僅存於本機端"><i class="ph-bold ph-device-mobile text-sm"></i> 本機端</span>
+            </div>
+
+            <h1 class="text-2xl font-bold flex items-center justify-center gap-2 tracking-wide mt-2">
                 <i class="ph-fill ph-shooting-star text-yellow-300 text-3xl"></i>
                 夢想慣性清單
             </h1>
