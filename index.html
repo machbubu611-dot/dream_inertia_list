@@ -34,6 +34,11 @@
                 moveTaskData: null,
                 targetMoveDate: '',
 
+                // 備註 Modal 狀態
+                showNoteModal: false,
+                noteTaskData: null,
+                currentNoteText: '',
+
                 dayNames: ['日', '一', '二', '三', '四', '五', '六'],
 
                 // 任務排序：指定驗收日 > 每週特定天 > 每日
@@ -119,6 +124,7 @@
                     this.saveData();
                 },
 
+                // 改期功能
                 openMoveTaskModal(dateStr, task) {
                     this.moveTaskData = { sourceDate: dateStr, task: task };
                     this.targetMoveDate = dateStr;
@@ -157,6 +163,27 @@
                     const [y, m, d] = tgtDate.split('-');
                     this.viewYear = parseInt(y);
                     this.viewMonth = parseInt(m) - 1;
+                },
+
+                // 備註功能
+                openNoteModal(dateStr, task) {
+                    this.noteTaskData = { date: dateStr, task: task };
+                    this.currentNoteText = task.note || '';
+                    this.showNoteModal = true;
+                },
+
+                confirmNote() {
+                    if (!this.noteTaskData) return;
+                    const { date, task } = this.noteTaskData;
+                    
+                    const targetTask = this.trackerData[date].find(t => t.id === task.id);
+                    if (targetTask) {
+                        targetTask.note = this.currentNoteText.trim();
+                    }
+                    
+                    this.trackerData = { ...this.trackerData }; // 觸發畫面更新
+                    this.saveData();
+                    this.showNoteModal = false;
                 },
 
                 // 展開/更新月曆表邏輯
@@ -212,9 +239,13 @@
 
                             if (shouldAdd) {
                                 let isCompleted = false;
+                                let existingNote = '';
                                 if (existingData[dateStr]) {
                                     const existingTask = existingData[dateStr].find(t => t.habitId === habit.id);
-                                    if (existingTask) isCompleted = existingTask.completed;
+                                    if (existingTask) {
+                                        isCompleted = existingTask.completed;
+                                        existingNote = existingTask.note || '';
+                                    }
                                 }
 
                                 tasksForDay.push({
@@ -222,7 +253,8 @@
                                     habitId: habit.id,
                                     action: habit.action,
                                     frequency: habit.frequency,
-                                    completed: isCompleted
+                                    completed: isCompleted,
+                                    note: existingNote
                                 });
                             }
                         });
@@ -478,7 +510,7 @@
                     </button>
                 </div>
 
-                <!-- Habit List (拖曳排序支援) -->
+                <!-- Habit List -->
                 <div class="space-y-3" x-ref="habitList">
                     <template x-for="(habit, index) in habits" :key="habit.id">
                         <div class="bg-white p-3 rounded-xl border border-gray-200 shadow-sm hover:border-indigo-300 transition"
@@ -629,8 +661,8 @@
                     
                     <div class="divide-y divide-gray-50">
                         <template x-for="task in trackerData[selectedDate]" :key="task.id">
-                            <div class="flex items-center p-4 hover:bg-slate-50 transition group">
-                                <label class="relative flex items-center cursor-pointer mr-3">
+                            <div class="flex items-start p-4 hover:bg-slate-50 transition group">
+                                <label class="relative flex items-center cursor-pointer mr-3 mt-0.5">
                                     <input type="checkbox" x-model="task.completed" @change="saveData" class="peer sr-only">
                                     <div class="w-6 h-6 border-2 border-gray-300 rounded-full peer-checked:bg-emerald-500 peer-checked:border-emerald-500 flex items-center justify-center transition-all duration-200 shadow-sm group-hover:border-indigo-300">
                                         <i class="ph-bold ph-check text-white opacity-0 peer-checked:opacity-100 text-sm transform scale-50 peer-checked:scale-100 transition-transform duration-200"></i>
@@ -638,24 +670,42 @@
                                 </label>
                                 
                                 <div class="flex-1 flex flex-col cursor-pointer" @click="task.completed = !task.completed; saveData()">
-                                    <span class="text-slate-700 font-medium transition-all duration-200"
+                                    <span class="text-slate-700 font-medium transition-all duration-200 leading-snug"
                                           :class="task.completed ? 'text-gray-400 line-through' : ''" x-text="task.action"></span>
                                     
-                                    <div class="mt-1 flex">
+                                    <div class="mt-1.5 flex items-center flex-wrap gap-2">
                                         <span class="text-[10px] font-bold px-2 py-0.5 rounded-md border flex items-center gap-1"
                                               :class="getFrequencyColor(task.frequency)">
                                             <i class="ph-fill ph-clock text-[10px]"></i>
                                             <span x-text="getFrequencyLabel(task.frequency)"></span>
                                         </span>
                                     </div>
+
+                                    <!-- 顯示備註區塊 -->
+                                    <div x-show="task.note" class="mt-2 text-sm text-slate-600 bg-slate-50 p-2.5 rounded-lg border border-slate-200/60 leading-relaxed shadow-sm">
+                                        <div class="flex items-start gap-1.5">
+                                            <i class="ph-fill ph-push-pin text-indigo-400 mt-0.5 text-xs flex-shrink-0"></i>
+                                            <span x-text="task.note" class="whitespace-pre-line break-words"></span>
+                                        </div>
+                                    </div>
                                 </div>
 
-                                <button x-show="task.frequency !== 'daily'"
-                                        @click.stop="openMoveTaskModal(selectedDate, task)" 
-                                        class="ml-2 p-2 rounded-xl text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 active:bg-indigo-100 transition flex-shrink-0"
-                                        title="更改日期">
-                                    <i class="ph-bold ph-calendar-plus text-xl"></i>
-                                </button>
+                                <div class="ml-2 flex flex-col gap-1 flex-shrink-0">
+                                    <!-- 備註按鈕 -->
+                                    <button @click.stop="openNoteModal(selectedDate, task)" 
+                                            class="p-2 rounded-xl text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 active:bg-indigo-100 transition"
+                                            title="新增/編輯備註">
+                                        <i class="text-xl" :class="task.note ? 'ph-fill ph-notepad text-indigo-500' : 'ph-bold ph-pencil-simple'"></i>
+                                    </button>
+
+                                    <!-- 改期按鈕 -->
+                                    <button x-show="task.frequency !== 'daily'"
+                                            @click.stop="openMoveTaskModal(selectedDate, task)" 
+                                            class="p-2 rounded-xl text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 active:bg-indigo-100 transition"
+                                            title="更改日期">
+                                        <i class="ph-bold ph-calendar-plus text-xl"></i>
+                                    </button>
+                                </div>
                             </div>
                         </template>
 
@@ -667,6 +717,33 @@
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- 備註 Modal -->
+    <div x-show="showNoteModal" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4" style="display: none;" 
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0">
+        <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 transform transition-all" @click.outside="showNoteModal = false"
+             x-transition:enter="transition ease-out duration-200 delay-75"
+             x-transition:enter-start="opacity-0 translate-y-4 scale-95"
+             x-transition:enter-end="opacity-100 translate-y-0 scale-100">
+            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2 mb-1">
+                <i class="ph-bold ph-pencil-simple text-indigo-500"></i> 任務備註
+            </h3>
+            <p class="text-sm font-medium text-slate-500 mb-4 border-b border-gray-100 pb-3" x-text="noteTaskData?.task.action"></p>
+            
+            <textarea x-model="currentNoteText" rows="4" placeholder="寫下今天的執行心得或細節 (例如：做了30分鐘瑜珈、看了原子習慣...)" 
+                      class="w-full p-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-400 focus:border-indigo-400 focus:outline-none mb-6 text-slate-700 font-medium resize-none leading-relaxed"></textarea>
+            
+            <div class="flex gap-3">
+                <button @click="showNoteModal = false" class="flex-1 py-3 bg-gray-100 text-gray-600 font-bold rounded-xl hover:bg-gray-200 active:scale-95 transition">取消</button>
+                <button @click="confirmNote" class="flex-1 py-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 active:scale-95 transition">儲存備註</button>
+            </div>
+        </div>
     </div>
 
     <!-- 改期 Modal -->
